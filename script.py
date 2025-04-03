@@ -192,6 +192,7 @@ def fit_forgetting_curve(user_id: int):
         t_start = grouped["elapsed_days"].min()
         t_end = grouped["elapsed_days"].max()
         t_span = t_end - t_start
+        retention = df["y"].mean()
 
         results.append(
             {
@@ -207,6 +208,7 @@ def fit_forgetting_curve(user_id: int):
                 "intercept_exp_with_intercept": exp_with_intercept_params[1],
                 "loss_exp_with_intercept": exp_with_intercept_loss,
                 "t_span": int(t_span),
+                "retention": retention,
             }
         )
 
