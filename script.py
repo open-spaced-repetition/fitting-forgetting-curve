@@ -79,34 +79,63 @@ def power_forgetting_curve(t, s, decay):
     return (1 + factor * t / s) ** decay
 
 
-def fit_exp_forgetting_curve(df):
+def exp_forgetting_curve_with_intercept(t, s, intercept):
+    return intercept + (1 - intercept) * exp_forgetting_curve(t, s)
+
+
+def fit_forgetting_curve_model(df, curve_function, initial_params, bounds):
+    """
+    Generic function to fit different forgetting curve models.
+
+    Args:
+        df: DataFrame with elapsed_days, retention, and total_cnt columns
+        curve_function: The forgetting curve function to fit
+        initial_params: Initial parameter values for optimization
+        bounds: Parameter bounds for optimization
+
+    Returns:
+        Optimized parameters
+    """
     x = df["elapsed_days"].values
     y = df["retention"].values
     size = df["total_cnt"].values
 
     def loss(params):
-        s = params
-        y_pred = exp_forgetting_curve(x, s)
-        loss = sum(-(y * np.log(y_pred) + (1 - y) * np.log(1 - y_pred)) * size)
-        return loss
+        y_pred = curve_function(x, *params)
+        return sum(-(y * np.log(y_pred) + (1 - y) * np.log(1 - y_pred)) * size)
 
-    res = minimize(loss, x0=1, bounds=[(0.1, 36500)])
-    return res.x[0]
+    res = minimize(loss, x0=initial_params, bounds=bounds)
+    return res.x if len(initial_params) > 1 else res.x[0]
+
+
+def fit_exp_forgetting_curve(df):
+    """Fit exponential forgetting curve model."""
+    return fit_forgetting_curve_model(
+        df,
+        lambda x, s: exp_forgetting_curve(x, s),
+        initial_params=[1],
+        bounds=[(0.1, 36500)],
+    )
 
 
 def fit_power_forgetting_curve(df):
-    x = df["elapsed_days"].values
-    y = df["retention"].values
-    size = df["total_cnt"].values
+    """Fit power-law forgetting curve model."""
+    return fit_forgetting_curve_model(
+        df,
+        lambda x, s, decay: power_forgetting_curve(x, s, decay),
+        initial_params=(1, -0.5),
+        bounds=((0.1, 36500), (-1, -0.05)),
+    )
 
-    def loss(params):
-        s, decay = params
-        y_pred = power_forgetting_curve(x, s, decay)
-        loss = sum(-(y * np.log(y_pred) + (1 - y) * np.log(1 - y_pred)) * size)
-        return loss
 
-    res = minimize(loss, x0=(1, -0.5), bounds=((0.1, 36500), (-1, -0.1)))
-    return res.x
+def fit_exp_forgetting_curve_with_intercept(df):
+    """Fit exponential forgetting curve model with intercept."""
+    return fit_forgetting_curve_model(
+        df,
+        lambda x, s, intercept: exp_forgetting_curve_with_intercept(x, s, intercept),
+        initial_params=(1, 0),
+        bounds=((0.1, 36500), (0, 0.9)),
+    )
 
 
 def fit_forgetting_curve(user_id: int):
@@ -144,13 +173,20 @@ def fit_forgetting_curve(user_id: int):
         )
         exp_params = fit_exp_forgetting_curve(grouped)
         power_params = fit_power_forgetting_curve(grouped)
-
+        exp_with_intercept_params = fit_exp_forgetting_curve_with_intercept(grouped)
         exp_loss = log_loss(
             df["y"], exp_forgetting_curve(df["elapsed_days"], exp_params), labels=[0, 1]
         )
         power_loss = log_loss(
             df["y"],
             power_forgetting_curve(df["elapsed_days"], *power_params),
+            labels=[0, 1],
+        )
+        exp_with_intercept_loss = log_loss(
+            df["y"],
+            exp_forgetting_curve_with_intercept(
+                df["elapsed_days"], *exp_with_intercept_params
+            ),
             labels=[0, 1],
         )
         t_start = grouped["elapsed_days"].min()
@@ -167,6 +203,9 @@ def fit_forgetting_curve(user_id: int):
                 "stability_pow": power_params[0],
                 "decay_pow": power_params[1],
                 "loss_pow": power_loss,
+                "stability_exp_with_intercept": exp_with_intercept_params[0],
+                "intercept_exp_with_intercept": exp_with_intercept_params[1],
+                "loss_exp_with_intercept": exp_with_intercept_loss,
                 "t_span": int(t_span),
             }
         )
@@ -188,6 +227,13 @@ def fit_forgetting_curve(user_id: int):
                 t_range,
                 power_forgetting_curve(t_range, *power_params),
                 label=f"Pow s:{power_params[0]:.2f} d:{power_params[1]:.2f} loss:{power_loss:.4f}",
+            )
+            plt.plot(
+                t_range,
+                exp_forgetting_curve_with_intercept(
+                    t_range, *exp_with_intercept_params
+                ),
+                label=f"Exp with intercept s:{exp_with_intercept_params[0]:.2f} intercept:{exp_with_intercept_params[1]:.2f} loss:{exp_with_intercept_loss:.4f}",
             )
             plt.title(
                 f"User ID: {user_id}, First Rating: {first_rating}, Sample Size: {df.shape[0]}"
