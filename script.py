@@ -9,10 +9,11 @@ from fsrs_optimizer import (  # type: ignore
 from scipy.optimize import minimize  # type: ignore
 from sklearn.metrics import log_loss  # type: ignore
 import matplotlib.pyplot as plt
-
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 max_seq_len: int = 64
 DATA_PATH = Path("../anki-revlogs-10k")
+PLOT = True
 
 
 def cum_concat(x):
@@ -109,16 +110,15 @@ def fit_power_forgetting_curve(df):
 
 
 def fit_forgetting_curve(user_id: int):
-    print(f"User ID: {user_id}")
     df_revlogs = pd.read_parquet(
         DATA_PATH / "revlogs", filters=[("user_id", "=", user_id)]
     )
     dataset = create_time_series(df_revlogs)
 
     pretrainset = dataset[dataset["i"] == 2]
-
     first_ratings = pretrainset["first_rating"].unique()
 
+    results = []
     for first_rating in first_ratings:
         df = pretrainset[pretrainset["first_rating"] == first_rating]
         grouped = (
@@ -132,11 +132,6 @@ def fit_forgetting_curve(user_id: int):
         exp_params = fit_exp_forgetting_curve(grouped)
         power_params = fit_power_forgetting_curve(grouped)
 
-        print(f"First Rating: {first_rating}")
-        print(f"Number of samples: {df.shape[0]}")
-        print(f"Exponential model parameters: {exp_params}")
-        print(f"Power model parameters: {power_params}")
-
         exp_loss = log_loss(
             df["y"], exp_forgetting_curve(df["elapsed_days"], exp_params), labels=[0, 1]
         )
@@ -145,30 +140,72 @@ def fit_forgetting_curve(user_id: int):
             power_forgetting_curve(df["elapsed_days"], *power_params),
             labels=[0, 1],
         )
-        print(f"Exponential model log loss: {exp_loss:.4f}")
-        print(f"Power model log loss: {power_loss:.4f}")
-        print("-" * 50)
+        t_start = grouped["elapsed_days"].min()
+        t_end = grouped["elapsed_days"].max()
+        t_span = t_end - t_start
 
-        plt.scatter(
-            grouped["elapsed_days"],
-            grouped["retention"],
-            grouped["total_cnt"] / grouped["total_cnt"].sum() * 100,
-            label="Actual",
+        results.append(
+            {
+                "user_id": user_id,
+                "first_rating": first_rating,
+                "sample_size": df.shape[0],
+                "stability_exp": exp_params,
+                "loss_exp": exp_loss,
+                "stability_pow": power_params[0],
+                "decay_pow": power_params[1],
+                "loss_pow": power_loss,
+                "t_span": int(t_span),
+            }
         )
-        plt.plot(
-            grouped["elapsed_days"],
-            exp_forgetting_curve(grouped["elapsed_days"], exp_params),
-            label="Exponential",
-        )
-        plt.plot(
-            grouped["elapsed_days"],
-            power_forgetting_curve(grouped["elapsed_days"], *power_params),
-            label="Power",
-        )
-        plt.legend()
-        plt.show()
+
+        if PLOT:
+            t_range = np.linspace(0, t_end, 100)
+            plt.scatter(
+                grouped["elapsed_days"],
+                grouped["retention"],
+                grouped["total_cnt"] / grouped["total_cnt"].sum() * 100,
+                label="Actual",
+            )
+            plt.plot(
+                t_range,
+                exp_forgetting_curve(t_range, exp_params),
+                label=f"Exp s:{exp_params:.2f} loss:{exp_loss:.4}",
+            )
+            plt.plot(
+                t_range,
+                power_forgetting_curve(t_range, *power_params),
+                label=f"Pow s:{power_params[0]:.2f} d:{power_params[1]:.2f} loss:{power_loss:.4f}",
+            )
+            plt.title(
+                f"User ID: {user_id}, First Rating: {first_rating}, Sample Size: {df.shape[0]}"
+            )
+            plt.legend()
+            plt.savefig(f"plots/{user_id}_{first_rating}.png")
+            plt.close()
+
+    return pd.DataFrame(results)
 
 
 if __name__ == "__main__":
-    for user_id in range(1, 10):
-        fit_forgetting_curve(user_id)
+    all_results = []
+    user_ids = range(1, 11)
+
+    with ProcessPoolExecutor() as executor:
+        # 提交所有任务
+        future_to_user = {
+            executor.submit(fit_forgetting_curve, user_id): user_id
+            for user_id in user_ids
+        }
+
+        # 收集结果
+        for future in as_completed(future_to_user):
+            user_id = future_to_user[future]
+            try:
+                results_df = future.result()
+                all_results.append(results_df)
+            except Exception as e:
+                print(f"Error processing user {user_id}: {str(e)}")
+
+    final_results = pd.concat(all_results, ignore_index=True)
+    final_results.sort_values(by=["user_id", "first_rating"], inplace=True)
+    final_results.to_csv("fitting_results.csv", index=False)
