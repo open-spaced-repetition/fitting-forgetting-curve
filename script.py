@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 from pathlib import Path
+import matplotlib.pyplot as plt
 from itertools import accumulate
 from fsrs_optimizer import (  # type: ignore
     remove_outliers,
@@ -8,7 +9,6 @@ from fsrs_optimizer import (  # type: ignore
 )
 from scipy.optimize import minimize  # type: ignore
 from sklearn.metrics import log_loss  # type: ignore
-import matplotlib.pyplot as plt
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 max_seq_len: int = 64
@@ -134,7 +134,7 @@ def fit_exp_forgetting_curve_with_intercept(df):
         df,
         lambda x, s, intercept: exp_forgetting_curve_with_intercept(x, s, intercept),
         initial_params=(1, 0),
-        bounds=((0.1, 36500), (0, 0.9)),
+        bounds=((0.1, 36500), (0, 0.95)),
     )
 
 
@@ -239,6 +239,7 @@ def fit_forgetting_curve(user_id: int):
                 f"User ID: {user_id}, First Rating: {first_rating}, Sample Size: {df.shape[0]}"
             )
             plt.legend()
+            Path("plots").mkdir(parents=True, exist_ok=True)
             plt.savefig(f"plots/{user_id}_{first_rating}.png")
             plt.close()
 
@@ -255,7 +256,6 @@ if __name__ == "__main__":
             for user_id in user_ids
         }
 
-        # 收集结果
         for future in as_completed(future_to_user):
             user_id = future_to_user[future]
             try:
