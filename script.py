@@ -110,10 +110,19 @@ def fit_power_forgetting_curve(df):
 
 
 def fit_forgetting_curve(user_id: int):
+    columns = ["card_id", "rating", "elapsed_days"]
     df_revlogs = pd.read_parquet(
-        DATA_PATH / "revlogs", filters=[("user_id", "=", user_id)]
+        DATA_PATH / "revlogs", filters=[("user_id", "=", user_id)], columns=columns
     )
     dataset = create_time_series(df_revlogs)
+    df_cards = pd.read_parquet(DATA_PATH / "cards", filters=[("user_id", "=", user_id)])
+    df_cards.drop(columns=["user_id"], inplace=True)
+    df_decks = pd.read_parquet(DATA_PATH / "decks", filters=[("user_id", "=", user_id)])
+    df_decks.drop(columns=["user_id"], inplace=True)
+    dataset = dataset.merge(df_cards, on="card_id", how="left").merge(
+        df_decks, on="deck_id", how="left"
+    )
+    dataset.dropna(inplace=True)
 
     pretrainset = dataset[dataset["i"] == 2]
     first_ratings = pretrainset["first_rating"].unique()
@@ -121,6 +130,10 @@ def fit_forgetting_curve(user_id: int):
     results = []
     for first_rating in first_ratings:
         df = pretrainset[pretrainset["first_rating"] == first_rating]
+        most_common_deck_id = df["deck_id"].value_counts().idxmax()
+        df = df[df["deck_id"] == most_common_deck_id]
+        most_common_r_history = df["r_history"].value_counts().idxmax()
+        df = df[df["r_history"] == most_common_r_history]
         grouped = (
             df.groupby(by=["elapsed_days"], group_keys=False)
             .agg(
@@ -188,10 +201,9 @@ def fit_forgetting_curve(user_id: int):
 
 if __name__ == "__main__":
     all_results = []
-    user_ids = range(1, 11)
+    user_ids = range(1, 101)
 
     with ProcessPoolExecutor() as executor:
-        # 提交所有任务
         future_to_user = {
             executor.submit(fit_forgetting_curve, user_id): user_id
             for user_id in user_ids
