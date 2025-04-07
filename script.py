@@ -163,6 +163,12 @@ def fit_forgetting_curve(user_id: int):
         df = df[df["deck_id"] == most_common_deck_id]
         most_common_r_history = df["r_history"].value_counts().idxmax()
         df = df[df["r_history"] == most_common_r_history]
+        if (
+            df["elapsed_days"].unique().size < 4
+            or df["y"].mean() > 0.995
+            or len(df) < 50
+        ):
+            continue
         grouped = (
             df.groupby(by=["elapsed_days"], group_keys=False)
             .agg(
@@ -252,7 +258,7 @@ if __name__ == "__main__":
     all_results = []
     user_ids = range(1, 101)
 
-    with ProcessPoolExecutor() as executor:
+    with ProcessPoolExecutor(max_workers=8) as executor:
         future_to_user = {
             executor.submit(fit_forgetting_curve, user_id): user_id
             for user_id in user_ids
