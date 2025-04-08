@@ -114,7 +114,7 @@ def fit_exp_forgetting_curve(df):
         df,
         lambda x, s: exp_forgetting_curve(x, s),
         initial_params=[1],
-        bounds=[(0.1, 36500)],
+        bounds=[(S_MIN, S_MAX)],
     )
 
 
@@ -124,7 +124,7 @@ def fit_power_forgetting_curve(df):
         df,
         lambda x, s, decay: power_forgetting_curve(x, s, decay),
         initial_params=(1, -0.5),
-        bounds=((0.1, 36500), (-1, -0.05)),
+        bounds=((S_MIN, S_MAX), (-1, -0.05)),
     )
 
 
@@ -134,7 +134,7 @@ def fit_exp_forgetting_curve_with_intercept(df):
         df,
         lambda x, s, intercept: exp_forgetting_curve_with_intercept(x, s, intercept),
         initial_params=(1, 0),
-        bounds=((0.1, 36500), (0, 0.95)),
+        bounds=((S_MIN, S_MAX), (0, 0.95)),
     )
 
 
