@@ -10,6 +10,21 @@ from fsrs_optimizer import (  # type: ignore
 from scipy.optimize import minimize  # type: ignore
 from sklearn.metrics import log_loss  # type: ignore
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from tqdm import tqdm
+import traceback
+from functools import wraps
+
+
+def catch_exceptions(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs), None
+        except Exception as e:
+            return None, traceback.format_exc()
+
+    return wrapper
+
 
 max_seq_len: int = 64
 DATA_PATH = Path("../anki-revlogs-10k")
@@ -54,6 +69,14 @@ def create_time_series(df):
     df["last_rating"] = last_rating
     df["y"] = df["rating"].map(lambda x: {1: 0, 2: 1, 3: 1, 4: 1}[x])
     df.drop(df[df["elapsed_days"] == 0].index, inplace=True)
+    first_r_history_list = df.groupby("card_id", group_keys=False)["rating"].apply(
+        lambda x: cum_concat([[i] for i in x])
+    )
+    df["first_r_history"] = [
+        ",".join(map(str, item[:-1]))
+        for sublist in first_r_history_list
+        for item in sublist
+    ]
     df["i"] = df.groupby("card_id").cumcount() + 1
     df["first_rating"] = df["card_id"].map(card_id_to_first_rating).astype(str)
     df["delta_t"] = df["elapsed_days"]
@@ -140,6 +163,7 @@ def fit_exp_forgetting_curve_with_intercept(df):
     )
 
 
+@catch_exceptions
 def fit_forgetting_curve(user_id: int):
     columns = ["card_id", "rating", "elapsed_days"]
     df_revlogs = pd.read_parquet(
@@ -266,13 +290,23 @@ if __name__ == "__main__":
             for user_id in user_ids
         }
 
-        for future in as_completed(future_to_user):
-            user_id = future_to_user[future]
-            try:
-                results_df = future.result()
-                all_results.append(results_df)
-            except Exception as e:
-                print(f"Error processing user {user_id}: {str(e)}")
+        total_users = len(user_ids)
+        processed_users = 0
+
+        with tqdm(total=total_users, desc="Processing users") as progress_bar:
+            for future in as_completed(future_to_user):
+                user_id = future_to_user[future]
+                results_df, error = future.result()
+                if error is None:
+                    all_results.append(results_df)
+                else:
+                    print(f"Error processing user {user_id}: {error}")
+
+                processed_users += 1
+                progress_bar.update(1)
+                progress_bar.set_postfix(
+                    {"Completed": f"{processed_users}/{total_users}"}
+                )
 
     final_results = pd.concat(all_results, ignore_index=True)
     final_results.sort_values(by=["user_id", "first_rating"], inplace=True)
