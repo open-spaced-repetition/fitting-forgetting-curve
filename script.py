@@ -14,6 +14,8 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 max_seq_len: int = 64
 DATA_PATH = Path("../anki-revlogs-10k")
 PLOT = True
+S_MIN = 0.01
+S_MAX = 36500
 
 
 def cum_concat(x):
